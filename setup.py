@@ -248,7 +248,7 @@ def get_extensions():
         except (ModuleNotFoundError, AttributeError):
             cpu_use = 4
 
-        os.environ.setdefault('MAX_JOBS', str(cpu_use))
+        os.environ.setdefault('MAX_JOBS', str(8))
         define_macros = []
 
         # Before PyTorch1.8.0, when compiling CUDA code, `cxx` is a
