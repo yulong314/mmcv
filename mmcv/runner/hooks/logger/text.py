@@ -176,7 +176,7 @@ class TextLoggerHook(LoggerHook):
             ]:
                 continue
             if isinstance(val, float):
-                val = f'{val:.4f}'
+                val = f'{val:.9f}'
             log_items.append(f'{name}: {val}')
         log_str += ', '.join(log_items)
 

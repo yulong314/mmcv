@@ -4,7 +4,7 @@ import logging
 from collections import defaultdict
 from itertools import chain
 from typing import Optional, Union
-
+import torch
 import torch.nn as nn
 from torch import Tensor
 from torch.nn.utils import clip_grad
@@ -14,7 +14,7 @@ from mmcv.utils import (IS_NPU_AVAILABLE, TORCH_VERSION, _BatchNorm,
 from ..dist_utils import allreduce_grads
 from ..fp16_utils import LossScaler, wrap_fp16_model
 from .hook import HOOKS, Hook
-
+import time
 try:
     # If PyTorch version >= 1.6.0, torch.cuda.amp.GradScaler would be imported
     # and used; otherwise, auto fp16 will adopt mmcv's implementation.
@@ -284,10 +284,16 @@ if (TORCH_VERSION != 'parrots'
             5. Save loss_scaler state_dict for resume purpose.
             """
             # clear grads of last iteration
+            torch.cuda.synchronize()
+            time0 = time.time()
+            
             runner.model.zero_grad()
             runner.optimizer.zero_grad()
-
+            time10 = time.time()
+            torch.cuda.synchronize()
             self.loss_scaler.scale(runner.outputs['loss']).backward()
+            torch.cuda.synchronize()
+            time20 = time.time()
             self.loss_scaler.unscale_(runner.optimizer)
             # grad clip
             if self.grad_clip is not None:
@@ -297,13 +303,16 @@ if (TORCH_VERSION != 'parrots'
                     runner.log_buffer.update({'grad_norm': float(grad_norm)},
                                              runner.outputs['num_samples'])
             # backward and update scaler
+            time30 = time.time()
             self.loss_scaler.step(runner.optimizer)
+            time40 = time.time()
             self.loss_scaler.update(self._scale_update_param)
-
+            time50 = time.time()
             # save state_dict of loss_scaler
             runner.meta.setdefault(
                 'fp16', {})['loss_scaler'] = self.loss_scaler.state_dict()
-
+            time60 = time.time()
+            # print(f'backward() {time20 - time10}, step() {time40 - time30}, update() {time50 - time40}, save() {time60 - time50}')
     @HOOKS.register_module()
     class GradientCumulativeFp16OptimizerHook(GradientCumulativeOptimizerHook,
                                               Fp16OptimizerHook):
@@ -323,7 +332,7 @@ if (TORCH_VERSION != 'parrots'
 
             loss = runner.outputs['loss'] / self._get_loss_factor(runner)
             self.loss_scaler.scale(loss).backward()
-
+            # print("loss_scaler.scale(loss).backward()",runner.iter)
             if (self.every_n_iters(runner, self.cumulative_iters)
                     or self.is_last_iter(runner)):
 
@@ -341,7 +350,7 @@ if (TORCH_VERSION != 'parrots'
                 # backward and update scaler
                 self.loss_scaler.step(runner.optimizer)
                 self.loss_scaler.update(self._scale_update_param)
-
+                # print("loss_scaler.step")
                 # save state_dict of loss_scaler
                 runner.meta.setdefault(
                     'fp16', {})['loss_scaler'] = self.loss_scaler.state_dict()
@@ -380,6 +389,7 @@ else:
                      bucket_size_mb: int = -1,
                      loss_scale: Union[float, str, dict] = 512.,
                      distributed: bool = True):
+            print("Fp16OptimizerHook,coalesce:",coalesce)
             self.grad_clip = grad_clip
             self.coalesce = coalesce
             self.bucket_size_mb = bucket_size_mb
@@ -542,6 +552,7 @@ else:
                                 runner.outputs['num_samples'])
                     # update fp32 params
                     runner.optimizer.step()
+                    print("")
                     # copy fp32 params to the fp16 model
                     self.copy_params_to_fp16(runner.model, fp32_weights)
                 else:
